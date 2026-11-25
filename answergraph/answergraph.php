@@ -3,10 +3,11 @@
  * Plugin Name: AnswerGraph - Modern AEO, GEO & SEO Engine
  * Plugin URI: https://github.com/DimasAkbarF/AnswerGraph
  * Update URI: https://github.com/DimasAkbarF/AnswerGraph
- * Description: Engine AEO, GEO, Entity SEO, Linter Regulasi ESDM, LLMs.txt Manager, dan Auto-Updater 1-klik untuk PT Dantara Ryaber Mandiri.
- * Version: 2.0.0
+ * Description: Engine AEO, GEO, Entity SEO, Linter Regulasi ESDM, LLMs.txt Manager, dan Auto-Updater 1-klik untuk WordPress.
+ * Version: 2.0.1
  * Requires PHP: 7.4
- * Author: PT Dantara Ryaber Mandiri
+ * Author: Dimas Akbar Faturohman
+ * Author URI: https://github.com/DimasAkbarF
  * Text Domain: answergraph
  */
 
@@ -14,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('ANSWERGRAPH_VERSION', '2.0.0');
+define('ANSWERGRAPH_VERSION', '2.0.1');
 define('ANSWERGRAPH_PATH', plugin_dir_path(__FILE__));
 define('ANSWERGRAPH_URL', plugin_dir_url(__FILE__));
 

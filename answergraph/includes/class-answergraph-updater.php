@@ -206,14 +206,14 @@ class AnswerGraph_Updater {
             'name'          => 'AnswerGraph - Modern AEO, GEO & SEO Engine',
             'slug'          => $this->slug,
             'version'       => $release['version'],
-            'author'        => '<a href="https://dantaramandiri.co.id/">PT Dantara Ryaber Mandiri</a>',
+            'author'        => '<a href="https://github.com/DimasAkbarF">Dimas Akbar Faturohman</a>',
             'homepage'      => $release['homepage'],
             'download_link' => $release['download_url'],
             'last_updated'  => $release['last_updated'],
             'tested'        => $release['tested'],
             'requires_php'  => $release['requires_php'],
             'sections'      => [
-                'description' => 'Plugin AEO, GEO, Schema JSON-LD, LLMs.txt Manager, dan Linter Regulasi Ketenagalistrikan ESDM untuk PT Dantara Ryaber Mandiri.',
+                'description' => 'Plugin WordPress AEO, GEO, Schema JSON-LD, LLMs.txt Manager, dan Linter Regulasi Ketenagalistrikan ESDM.',
                 'changelog'   => nl2br(esc_html($release['changelog'])),
             ],
         ];
