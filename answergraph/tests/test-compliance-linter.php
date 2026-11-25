@@ -29,6 +29,35 @@ class TestAnswerGraphComplianceLinter extends AnswerGraphTestCase {
         $this->assertEquals('clean', $res['status']);
         $this->assertEquals(0, $res['issues_count']);
     }
+
+    public function test_respects_disabled_esdm_preset_and_evaluates_freshness() {
+        $linter = new AnswerGraph_Compliance_Linter();
+        $res = $linter->lint('<p>Pasal 4 pembangkit > 5 MW.</p>', 'test', [
+            'preset_esdm'   => false,
+            'custom_banned' => ['harga murah meriah'],
+        ]);
+        $this->assertEquals('clean', $res['status']);
+
+        $res_custom = $linter->lint('<p>Promo harga murah meriah hari ini.</p>', 'test', [
+            'preset_esdm'   => false,
+            'custom_banned' => ['harga murah meriah'],
+        ]);
+        $this->assertEquals('warning', $res_custom['status']);
+
+        $stale = $linter->evaluate_freshness('2025-01-01 00:00:00', strtotime('2026-11-25 00:00:00'));
+        $fresh = $linter->evaluate_freshness('2026-10-01 00:00:00', strtotime('2026-11-25 00:00:00'));
+        $zero  = $linter->evaluate_freshness('0000-00-00 00:00:00', strtotime('2026-11-25 00:00:00'));
+        $bad   = $linter->evaluate_freshness('not-a-date', strtotime('2026-11-25 00:00:00'));
+        $now_boundary = strtotime('2026-11-25 00:00:00 UTC');
+        $at_180 = $linter->evaluate_freshness(gmdate('Y-m-d H:i:s', $now_boundary - 180 * 86400), $now_boundary);
+        $at_181 = $linter->evaluate_freshness(gmdate('Y-m-d H:i:s', $now_boundary - 181 * 86400), $now_boundary);
+        $this->assertEquals('stale', $stale['status']);
+        $this->assertEquals('fresh', $fresh['status']);
+        $this->assertEquals('unknown', $zero['status']);
+        $this->assertEquals('unknown', $bad['status']);
+        $this->assertEquals('fresh', $at_180['status']);
+        $this->assertEquals('stale', $at_181['status']);
+    }
 }
 
 run_test_file(__FILE__);

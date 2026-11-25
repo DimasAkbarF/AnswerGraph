@@ -278,7 +278,18 @@ class AnswerGraph_Updater {
         check_admin_referer('answergraph_check_update_nonce');
         delete_transient(self::CACHE_KEY);
         delete_site_transient('update_plugins');
-        $this->get_remote_release(true);
+        $release = $this->get_remote_release(true);
+        if (class_exists('AnswerGraph_Bot_Logger')) {
+            $logger = new AnswerGraph_Bot_Logger();
+            if ($release) {
+                $msg = !empty($release['is_newer'])
+                    ? 'Update tersedia: v' . $release['version'] . ' (terpasang v' . $this->version . ')'
+                    : 'Cek update selesai: versi terbaru v' . $release['version'] . ' sudah terpasang';
+                $logger->record_event('updater', $msg, 'ok');
+            } else {
+                $logger->record_event('updater', 'Gagal memeriksa pembaruan dari endpoint remote.', 'error');
+            }
+        }
         if (function_exists('wp_update_plugins')) {
             wp_update_plugins();
         }

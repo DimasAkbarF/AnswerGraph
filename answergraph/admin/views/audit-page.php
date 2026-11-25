@@ -18,17 +18,18 @@ if (!defined('ABSPATH')) {
         <table class="widefat striped" style="border: none;">
             <thead>
                 <tr>
-                    <th style="width: 34%;">Judul &amp; Tipe</th>
-                    <th style="width: 13%;">GEO Score</th>
-                    <th style="width: 15%;">AEO Direct Answer</th>
-                    <th style="width: 26%;">Temuan Regulasi / Anti-Slop</th>
+                    <th style="width: 28%;">Judul &amp; Tipe</th>
+                    <th style="width: 11%;">GEO Score</th>
+                    <th style="width: 13%;">AEO Answer</th>
+                    <th style="width: 12%;">Kesegaran</th>
+                    <th style="width: 24%;">Temuan Regulasi / Anti-Slop</th>
                     <th style="width: 12%;">Aksi</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if (empty($rows)) : ?>
                     <tr>
-                        <td colspan="5">Belum ada post atau halaman terpublikasi.</td>
+                        <td colspan="6">Belum ada post atau halaman terpublikasi.</td>
                     </tr>
                 <?php else : ?>
                     <?php foreach ($rows as $row) :
@@ -41,6 +42,14 @@ if (!defined('ABSPATH')) {
                         $aeo_style = $row['aeo_status'] === 'green'
                             ? 'background:#dcfce7;color:#166534;'
                             : ($row['aeo_status'] === 'orange' ? 'background:#fef3c7;color:#854d0e;' : 'background:#fee2e2;color:#991b1b;');
+
+                        $fresh = isset($row['freshness']) ? $row['freshness'] : ['status' => 'unknown', 'days_old' => null];
+                        $fresh_label = $fresh['status'] === 'fresh'
+                            ? 'Segar (' . intval($fresh['days_old']) . ' hr)'
+                            : ($fresh['status'] === 'stale' ? 'Usang (' . intval($fresh['days_old']) . ' hr)' : 'N/A');
+                        $fresh_style = $fresh['status'] === 'fresh'
+                            ? 'background:#dcfce7;color:#166534;'
+                            : ($fresh['status'] === 'stale' ? 'background:#fef3c7;color:#854d0e;' : 'background:#f1f5f9;color:#475569;');
 
                         $issues = $row['lint']['issues'];
                     ?>
@@ -59,6 +68,11 @@ if (!defined('ABSPATH')) {
                             <td>
                                 <span style="display:inline-block;padding:3px 8px;border-radius:4px;font-weight:700;font-size:11px;<?php echo esc_attr($aeo_style); ?>">
                                     <?php echo esc_html($aeo_label); ?>
+                                </span>
+                            </td>
+                            <td>
+                                <span style="display:inline-block;padding:3px 8px;border-radius:4px;font-weight:700;font-size:11px;<?php echo esc_attr($fresh_style); ?>">
+                                    <?php echo esc_html($fresh_label); ?>
                                 </span>
                             </td>
                             <td>

@@ -12,17 +12,21 @@ class AnswerGraph_Admin {
     protected $geo_analyzer;
     protected $aeo_analyzer;
     protected $linter;
+    protected $pillar_links;
 
     public function __construct() {
         $this->geo_analyzer = new AnswerGraph_GEO_Analyzer();
         $this->aeo_analyzer = new AnswerGraph_AEO_Analyzer();
         $this->linter       = class_exists('AnswerGraph_Compliance_Linter') ? new AnswerGraph_Compliance_Linter() : null;
+        $this->pillar_links = class_exists('AnswerGraph_Pillar_Links') ? new AnswerGraph_Pillar_Links() : null;
 
         add_action('admin_menu', [$this, 'add_admin_menu']);
         add_action('admin_init', [$this, 'register_settings']);
         add_action('add_meta_boxes', [$this, 'add_post_metabox']);
         add_action('save_post', [$this, 'save_post_meta']);
         add_action('admin_post_answergraph_sync_llms', [$this, 'handle_sync_llms']);
+        add_action('admin_post_answergraph_ping_indexnow', [$this, 'handle_ping_indexnow']);
+        add_action('admin_post_answergraph_clear_logs', [$this, 'handle_clear_logs']);
     }
 
     public function add_admin_menu() {
@@ -66,16 +70,24 @@ class AnswerGraph_Admin {
 
     public function register_settings() {
         $text_opts = [
-            'answergraph_sameas_urls'    => 'sanitize_textarea_field',
-            'answergraph_update_url'     => 'esc_url_raw',
-            'answergraph_update_token'   => 'sanitize_text_field',
-            'answergraph_author_override'=> 'sanitize_text_field',
+            'answergraph_sameas_urls'        => 'sanitize_textarea_field',
+            'answergraph_update_url'         => 'esc_url_raw',
+            'answergraph_update_token'       => 'sanitize_text_field',
+            'answergraph_author_override'    => 'sanitize_text_field',
+            'answergraph_pillar_rules'       => 'sanitize_textarea_field',
+            'answergraph_custom_banned_terms'=> 'sanitize_textarea_field',
         ];
         foreach ($text_opts as $opt => $cb) {
+            $default = '';
+            if ($opt === 'answergraph_update_url') {
+                $default = 'https://github.com/DimasAkbarF/AnswerGraph';
+            } elseif ($opt === 'answergraph_pillar_rules' && class_exists('AnswerGraph_Pillar_Links')) {
+                $default = AnswerGraph_Pillar_Links::DEFAULT_RULES;
+            }
             register_setting('answergraph_options_group', $opt, [
                 'type'              => 'string',
                 'sanitize_callback' => $cb,
-                'default'           => $opt === 'answergraph_update_url' ? 'https://github.com/DimasAkbarF/AnswerGraph' : '',
+                'default'           => $default,
             ]);
         }
 
@@ -86,6 +98,8 @@ class AnswerGraph_Admin {
             'answergraph_ssr_lang_id'         => 'yes',
             'answergraph_ssr_counter_fix'     => 'yes',
             'answergraph_ssr_h1_promote'      => 'yes',
+            'answergraph_indexnow_enabled'    => 'yes',
+            'answergraph_linter_preset_esdm'  => 'yes',
         ];
         foreach ($toggle_opts as $opt => $default) {
             register_setting('answergraph_options_group', $opt, [
@@ -124,11 +138,20 @@ class AnswerGraph_Admin {
                 'orderby'     => 'modified',
                 'order'       => 'DESC',
             ]);
+            $lint_opts = [
+                'preset_esdm'   => function_exists('get_option') ? (get_option('answergraph_linter_preset_esdm', 'yes') === 'yes') : true,
+                'custom_banned' => ($this->linter && method_exists($this->linter, 'get_configured_banned_terms'))
+                    ? $this->linter->get_configured_banned_terms()
+                    : [],
+            ];
             foreach ($items as $item) {
-                $content = $this->get_combined_post_content($item);
-                $geo     = $this->geo_analyzer->evaluate_content($content);
-                $aeo     = $this->aeo_analyzer->analyze_snippet_potential($content);
-                $lint    = $this->linter ? $this->linter->lint($content, $item->post_name) : ['issues_count' => 0, 'issues' => [], 'status' => 'clean'];
+                $content   = $this->get_combined_post_content($item);
+                $geo       = $this->geo_analyzer->evaluate_content($content);
+                $aeo       = $this->aeo_analyzer->analyze_snippet_potential($content);
+                $lint      = $this->linter ? $this->linter->lint($content, $item->post_name, $lint_opts) : ['issues_count' => 0, 'issues' => [], 'status' => 'clean'];
+                $freshness = $this->linter && method_exists($this->linter, 'evaluate_freshness')
+                    ? $this->linter->evaluate_freshness(isset($item->post_modified_gmt) ? $item->post_modified_gmt : '')
+                    : ['days_old' => null, 'status' => 'unknown'];
                 $rows[]  = [
                     'ID'         => $item->ID,
                     'title'      => $item->post_title,
@@ -137,6 +160,7 @@ class AnswerGraph_Admin {
                     'geo_score'  => (int) $geo['geo_score'],
                     'aeo_status' => $aeo['status'],
                     'lint'       => $lint,
+                    'freshness'  => $freshness,
                     'edit_url'   => function_exists('get_edit_post_link') ? get_edit_post_link($item->ID, 'raw') : '#',
                     'view_url'   => function_exists('get_permalink') ? get_permalink($item->ID) : '#',
                 ];
@@ -172,7 +196,50 @@ class AnswerGraph_Admin {
         }
 
         $status = empty($errors) ? 'ok' : 'err';
+        if (class_exists('AnswerGraph_Bot_Logger')) {
+            (new AnswerGraph_Bot_Logger())->record_event(
+                'llms_sync',
+                $status === 'ok' ? 'LLMs.txt & LLMs-full.txt berhasil disimpan dan disinkronkan.' : ('Gagal tulis file statis: ' . implode(', ', $errors)),
+                $status === 'ok' ? 'ok' : 'error'
+            );
+        }
         wp_safe_redirect(admin_url('admin.php?page=answergraph-settings&llms_sync=' . $status));
+        exit;
+    }
+
+    public function handle_ping_indexnow() {
+        if (!current_user_can('manage_options')) {
+            wp_die('Tidak memiliki izin.', 403);
+        }
+        check_admin_referer('answergraph_ping_indexnow_nonce');
+
+        $ok      = false;
+        $enabled = function_exists('get_option') ? (get_option('answergraph_indexnow_enabled', 'yes') === 'yes') : true;
+        if ($enabled && class_exists('AnswerGraph_IndexNow')) {
+            $in   = new AnswerGraph_IndexNow();
+            $urls = [home_url('/'), home_url('/llms.txt')];
+            $ok   = $in->ping_urls($urls, true);
+        }
+        if (class_exists('AnswerGraph_Bot_Logger')) {
+            $msg = !$enabled
+                ? 'Ping manual dilewati karena IndexNow nonaktif.'
+                : ($ok ? 'Ping manual IndexNow berhasil dikirim (beranda & /llms.txt).' : 'Ping manual IndexNow gagal terhubung ke api.indexnow.org.');
+            (new AnswerGraph_Bot_Logger())->record_event('indexnow', $msg, $ok ? 'ok' : 'error');
+        }
+        wp_safe_redirect(admin_url('admin.php?page=answergraph-settings&indexnow_ping=' . ($ok ? 'ok' : 'err')));
+        exit;
+    }
+
+    public function handle_clear_logs() {
+        if (!current_user_can('manage_options')) {
+            wp_die('Tidak memiliki izin.', 403);
+        }
+        check_admin_referer('answergraph_clear_logs_nonce');
+
+        if (class_exists('AnswerGraph_Bot_Logger')) {
+            (new AnswerGraph_Bot_Logger())->clear_all();
+        }
+        wp_safe_redirect(admin_url('admin.php?page=answergraph-settings&logs_cleared=ok'));
         exit;
     }
 
@@ -219,17 +286,33 @@ class AnswerGraph_Admin {
         $content       = $this->get_combined_post_content($post, $has_elementor);
         $slug          = isset($post->post_name) ? (string) $post->post_name : '';
 
-        $geo_eval  = $this->geo_analyzer->evaluate_content($content);
-        $aeo_eval  = $this->aeo_analyzer->analyze_snippet_potential($content);
-        $lint_eval = $this->linter ? $this->linter->lint($content, $slug) : ['issues' => [], 'issues_count' => 0, 'status' => 'clean'];
+        $geo_eval      = $this->geo_analyzer->evaluate_content($content);
+        $aeo_eval      = $this->aeo_analyzer->analyze_snippet_potential($content);
+        $preset_esdm   = function_exists('get_option') ? (get_option('answergraph_linter_preset_esdm', 'yes') === 'yes') : true;
+        $custom_banned = ($this->linter && method_exists($this->linter, 'get_configured_banned_terms'))
+            ? $this->linter->get_configured_banned_terms()
+            : [];
+        $lint_eval     = $this->linter
+            ? $this->linter->lint($content, $slug, ['preset_esdm' => $preset_esdm, 'custom_banned' => $custom_banned])
+            : ['issues' => [], 'issues_count' => 0, 'status' => 'clean'];
+
+        $permalink    = (function_exists('get_permalink') && get_permalink($post->ID)) ? get_permalink($post->ID) : '';
+        $pillar_opps  = [];
+        if ($this->pillar_links) {
+            $raw_rules   = function_exists('get_option')
+                ? get_option('answergraph_pillar_rules', AnswerGraph_Pillar_Links::DEFAULT_RULES)
+                : AnswerGraph_Pillar_Links::DEFAULT_RULES;
+            $rules       = $this->pillar_links->parse_rules((string) $raw_rules);
+            $pillar_opps = $this->pillar_links->find_opportunities($content, (string) $permalink, $rules);
+        }
 
         $schema_type = function_exists('get_post_meta') ? (string) get_post_meta($post->ID, '_answergraph_schema_type', true) : 'default';
         if ($schema_type === '') {
             $schema_type = 'default';
         }
 
-        $md_url = function_exists('get_permalink') && get_permalink($post->ID)
-            ? add_query_arg('format', 'llm-md', get_permalink($post->ID))
+        $md_url = $permalink !== ''
+            ? add_query_arg('format', 'llm-md', $permalink)
             : '#';
 
         include ANSWERGRAPH_PATH . 'admin/views/meta-box.php';

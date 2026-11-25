@@ -1,7 +1,7 @@
 <?php
 /**
- * AnswerGraph Post Editor Meta Box View (v2.0.0)
- * Live AEO/GEO Analyzer, Dantara ESDM Regulatory Linter, & Per-Post Schema Selector.
+ * AnswerGraph Post Editor Meta Box View (v2.1.0)
+ * Live AEO/GEO Analyzer, Configurable Linter, Pillar Linker, & Per-Post Schema Selector.
  */
 if (!defined('ABSPATH')) exit;
 
@@ -28,9 +28,13 @@ if ($aeo_status === 'green') {
 
 $current_slug = isset($slug) ? (string) $slug : '';
 $current_schema = isset($schema_type) ? (string) $schema_type : 'default';
+$preset_esdm_flag = !isset($preset_esdm) || !empty($preset_esdm) ? '1' : '0';
+$custom_banned_list = isset($custom_banned) && is_array($custom_banned) ? array_values($custom_banned) : [];
+$custom_banned_json = function_exists('wp_json_encode') ? wp_json_encode($custom_banned_list) : json_encode($custom_banned_list);
+$pillar_list = isset($pillar_opps) && is_array($pillar_opps) ? $pillar_opps : [];
 ?>
 
-<div class="answergraph-metabox-root" data-ag-elementor="<?php echo !empty($has_elementor) ? '1' : '0'; ?>" data-ag-slug="<?php echo esc_attr($current_slug); ?>" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; font-size: 13px; line-height: 1.5; background: #ffffff;">
+<div class="answergraph-metabox-root" data-ag-elementor="<?php echo !empty($has_elementor) ? '1' : '0'; ?>" data-ag-slug="<?php echo esc_attr($current_slug); ?>" data-ag-preset-esdm="<?php echo esc_attr($preset_esdm_flag); ?>" data-ag-custom-banned="<?php echo esc_attr((string) $custom_banned_json); ?>" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; font-size: 13px; line-height: 1.5; background: #ffffff;">
 
     <style>
         .answergraph-metabox-root * { box-sizing: border-box; }
@@ -250,6 +254,33 @@ $current_schema = isset($schema_type) ? (string) $schema_type : 'default';
                 <?php endif; ?>
             </div>
         </div>
+
+        <!-- Pillar Internal Link Suggestions -->
+        <div style="border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; margin-top: 12px;">
+            <div style="background: #f8fafc; padding: 10px 14px; font-weight: 700; font-size: 12px; color: #0f172a; text-transform: uppercase; border-bottom: 1px solid #e2e8f0;">
+                Saran Link Internal Pilar
+            </div>
+            <div data-ag="pillar-container" style="padding: 12px 14px;">
+                <?php if (empty($pillar_list)) : ?>
+                    <p style="margin: 0; color: #475569;">Tidak ada peluang link internal pilar yang belum tertaut di artikel ini.</p>
+                <?php else : ?>
+                    <ul style="margin: 0; padding: 0; list-style: none;">
+                        <?php foreach ($pillar_list as $opp) : ?>
+                            <li style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f1f5f9;">
+                                <div>
+                                    <strong><?php echo esc_html($opp['anchor']); ?></strong>
+                                    <span style="color: #64748b; font-size: 12px;">&rarr; <?php echo esc_html($opp['url']); ?></span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <button type="button" class="button button-small answergraph-copy-pillar" data-snippet="<?php echo esc_attr($opp['snippet']); ?>">Salin HTML Link</button>
+                                    <span class="answergraph-copy-status" aria-live="polite" style="font-size: 11px; color: #166534; font-weight: 600;"></span>
+                                </div>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+            </div>
+        </div>
     </div>
 
     <!-- TAB 3: SCHEMA SELECTOR & MARKDOWN VIEW -->
@@ -312,36 +343,80 @@ $current_schema = isset($schema_type) ? (string) $schema_type : 'default';
         var siteHost = (window.location && window.location.hostname) ? window.location.hostname.toLowerCase() : '';
         var slug = (root.getAttribute('data-ag-slug') || '').toLowerCase();
         var hasElementor = root.getAttribute('data-ag-elementor') === '1';
+        var presetEsdm = root.getAttribute('data-ag-preset-esdm') !== '0';
+        var customBanned = [];
+        try {
+            var parsedBanned = JSON.parse(root.getAttribute('data-ag-custom-banned') || '[]');
+            if (Array.isArray(parsedBanned)) customBanned = parsedBanned;
+        } catch (e) {}
         var timer = null;
         var lastSnapshot = null;
 
+        root.addEventListener('click', function(ev) {
+            var btn = ev.target && ev.target.closest ? ev.target.closest('.answergraph-copy-pillar') : null;
+            if (!btn) return;
+            var snippet = btn.getAttribute('data-snippet') || '';
+            var statusEl = btn.parentElement ? btn.parentElement.querySelector('.answergraph-copy-status') : null;
+            function markCopied() {
+                if (!statusEl) return;
+                statusEl.textContent = 'Tersalin!';
+                setTimeout(function() { statusEl.textContent = ''; }, 2000);
+            }
+            function fallbackCopy() {
+                var ta = document.createElement('textarea');
+                ta.value = snippet;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                try { if (document.execCommand('copy')) markCopied(); } catch (e) {}
+                document.body.removeChild(ta);
+            }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(snippet).then(markCopied, fallbackCopy);
+            } else {
+                fallbackCopy();
+            }
+        });
+
         function stripTags(html) {
-            var tmp = document.createElement('div');
-            tmp.innerHTML = html || '';
-            return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+            var rawHtml = html || '';
+            var text = '';
+            if (typeof DOMParser !== 'undefined') {
+                var doc = new DOMParser().parseFromString(rawHtml, 'text/html');
+                text = (doc && doc.body && doc.body.textContent) ? doc.body.textContent : '';
+            } else {
+                text = rawHtml.replace(/<[^>]*>/g, ' ');
+            }
+            return text.replace(/\s+/g, ' ').trim();
         }
 
         function runLinter(raw, text) {
             var issues = [];
             if (!text) return issues;
 
-            if (/\bPasal\s+4\b/i.test(text) && /(SMK2|5\s*MW|200\s*kVA)/i.test(text)) {
-                issues.push({ severity: 'error', message: 'Menyebut "Pasal 4" untuk kewajiban/ambang SMK2. Gunakan Pasal 26 ayat (1) dan Pasal 28 ayat (2) Permen ESDM No. 10/2021.' });
-            }
-            if (/(di\s+atas\s+5\s*MW|lebih\s+dari\s+5\s*MW|>\s*5\s*MW|&gt;\s*5\s*MW)/i.test(raw)) {
-                issues.push({ severity: 'error', message: 'Menulis "> 5 MW" atau "di atas/lebih dari 5 MW". Gunakan "paling kecil 5 MW (>= 5 MW)" termasuk tepat 5 MW.' });
-            }
-            if (/SKTTK[^.]{0,80}\b5\s*(?:\(lima\)\s*)?tahun\b|\b5\s*(?:\(lima\)\s*)?tahun\b[^.]{0,80}SKTTK/i.test(text)) {
-                issues.push({ severity: 'error', message: 'Menyebut masa berlaku SKTTK 5 tahun. Masa berlaku SKTTK resmi adalah 3 (tiga) tahun.' });
-            }
-            if (/SMK2[^.]{0,120}Permenaker|Permenaker[^.]{0,120}(?:mengatur|mewajibkan|dasar)\s+SMK2/i.test(text)) {
-                issues.push({ severity: 'error', message: 'Mengaitkan SMK2 dengan Permenaker. SMK2 berada mutlak di bawah Permen ESDM No. 10/2021.' });
-            }
-            if (/LSSM-067-IDN/i.test(text) && !/(LSSM\s+terakreditasi\s+KAN|Evodia)/i.test(text)) {
-                issues.push({ severity: 'warning', message: 'LSSM-067-IDN adalah akreditasi KAN milik LSSM penerbit sertifikat ISO 9001:2015 (PT Evodia Global Sertifikasi), bukan milik Dantara.' });
-            }
-            if (/(didukung|tenaga\s+ahli|instruktur)[^.]{0,80}Inspektur\s+Ketenagalistrikan/i.test(text)) {
-                issues.push({ severity: 'warning', message: 'Mengklaim "Inspektur Ketenagalistrikan" sebagai tenaga ahli internal berisiko konflik kepentingan.' });
+            if (presetEsdm) {
+                if (/\bPasal\s+4\b/i.test(text) && /(SMK2|5\s*MW|200\s*kVA)/i.test(text)) {
+                    issues.push({ severity: 'error', message: 'Menyebut "Pasal 4" untuk kewajiban/ambang SMK2. Gunakan Pasal 26 ayat (1) dan Pasal 28 ayat (2) Permen ESDM No. 10/2021.' });
+                }
+                if (/(di\s+atas\s+5\s*MW|lebih\s+dari\s+5\s*MW|>\s*5\s*MW|&gt;\s*5\s*MW)/i.test(raw)) {
+                    issues.push({ severity: 'error', message: 'Menulis "> 5 MW" atau "di atas/lebih dari 5 MW". Gunakan "paling kecil 5 MW (>= 5 MW)" termasuk tepat 5 MW.' });
+                }
+                if (/SKTTK[^.]{0,80}\b5\s*(?:\(lima\)\s*)?tahun\b|\b5\s*(?:\(lima\)\s*)?tahun\b[^.]{0,80}SKTTK/i.test(text)) {
+                    issues.push({ severity: 'error', message: 'Menyebut masa berlaku SKTTK 5 tahun. Masa berlaku SKTTK resmi adalah 3 (tiga) tahun.' });
+                }
+                if (/SMK2[^.]{0,120}Permenaker|Permenaker[^.]{0,120}(?:mengatur|mewajibkan|dasar)\s+SMK2/i.test(text)) {
+                    issues.push({ severity: 'error', message: 'Mengaitkan SMK2 dengan Permenaker. SMK2 berada mutlak di bawah Permen ESDM No. 10/2021.' });
+                }
+                if (/LSSM-067-IDN/i.test(text) && !/(LSSM\s+terakreditasi\s+KAN|Evodia)/i.test(text)) {
+                    issues.push({ severity: 'warning', message: 'LSSM-067-IDN adalah akreditasi KAN milik LSSM penerbit sertifikat ISO 9001:2015 (PT Evodia Global Sertifikasi), bukan milik Dantara.' });
+                }
+                if (/(didukung|tenaga\s+ahli|instruktur)[^.]{0,80}Inspektur\s+Ketenagalistrikan/i.test(text)) {
+                    issues.push({ severity: 'warning', message: 'Mengklaim "Inspektur Ketenagalistrikan" sebagai tenaga ahli internal berisiko konflik kepentingan.' });
+                }
+                if (slug !== 'bimtek-smk2' && /\b(SMK2|SKTTK|PJK2)\b/i.test(text) && raw.toLowerCase().indexOf('/bimtek-smk2') === -1) {
+                    issues.push({ severity: 'info', message: 'Belum ada internal link kontekstual ke halaman pilar /bimtek-smk2.' });
+                }
             }
             var cliches = ['di era digital yang serba dinamis', 'tidak dapat dipungkiri bahwa', 'solusi mutakhir', 'secara keseluruhan, dapat disimpulkan', 'secara keseluruhan, dapat ditarik kesimpulan'];
             for (var i = 0; i < cliches.length; i++) {
@@ -350,8 +425,11 @@ $current_schema = isset($schema_type) ? (string) $schema_type : 'default';
                     break;
                 }
             }
-            if (slug !== 'bimtek-smk2' && /\b(SMK2|SKTTK|PJK2)\b/i.test(text) && raw.toLowerCase().indexOf('/bimtek-smk2') === -1) {
-                issues.push({ severity: 'info', message: 'Belum ada internal link kontekstual ke halaman pilar /bimtek-smk2.' });
+            for (var j = 0; j < customBanned.length; j++) {
+                var term = String(customBanned[j] || '').trim();
+                if (term && text.toLowerCase().indexOf(term.toLowerCase()) !== -1) {
+                    issues.push({ severity: 'warning', message: 'Terdeteksi kata terlarang kustom ("' + term + '").' });
+                }
             }
             return issues;
         }

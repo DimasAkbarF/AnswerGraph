@@ -3,8 +3,8 @@
  * Plugin Name: AnswerGraph - Modern AEO, GEO & SEO Engine
  * Plugin URI: https://github.com/DimasAkbarF/AnswerGraph
  * Update URI: https://github.com/DimasAkbarF/AnswerGraph
- * Description: Engine AEO, GEO, Entity SEO, Linter Regulasi ESDM, LLMs.txt Manager, dan Auto-Updater 1-klik untuk WordPress.
- * Version: 2.0.1
+ * Description: Engine AEO, GEO, Entity SEO, Linter Regulasi & Anti-Slop, Pelacak Bot AI, IndexNow, LLMs.txt Manager, dan Auto-Updater 1-klik.
+ * Version: 2.1.0
  * Requires PHP: 7.4
  * Author: Dimas Akbar Faturohman
  * Author URI: https://github.com/DimasAkbarF
@@ -15,9 +15,15 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('ANSWERGRAPH_VERSION', '2.0.1');
-define('ANSWERGRAPH_PATH', plugin_dir_path(__FILE__));
-define('ANSWERGRAPH_URL', plugin_dir_url(__FILE__));
+if (!defined('ANSWERGRAPH_VERSION')) {
+    define('ANSWERGRAPH_VERSION', '2.1.0');
+}
+if (!defined('ANSWERGRAPH_PATH')) {
+    define('ANSWERGRAPH_PATH', plugin_dir_path(__FILE__));
+}
+if (!defined('ANSWERGRAPH_URL')) {
+    define('ANSWERGRAPH_URL', plugin_dir_url(__FILE__));
+}
 
 // Autoload components
 require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-robots.php';
@@ -26,6 +32,9 @@ require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-markdown-view.php';
 require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-geo-analyzer.php';
 require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-aeo-analyzer.php';
 require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-compliance-linter.php';
+require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-pillar-links.php';
+require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-bot-logger.php';
+require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-indexnow.php';
 require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-schema.php';
 require_once ANSWERGRAPH_PATH . 'includes/class-answergraph-updater.php';
 require_once ANSWERGRAPH_PATH . 'admin/class-answergraph-admin.php';
@@ -36,20 +45,27 @@ class AnswerGraph_Core {
     protected $llmstxt;
     protected $markdown;
     protected $schema;
+    protected $bot_logger;
+    protected $indexnow;
 
     public function __construct() {
-        $this->robots   = new AnswerGraph_Robots();
-        $this->llmstxt  = new AnswerGraph_LLMsTxt();
-        $this->markdown = new AnswerGraph_Markdown_View();
-        $this->schema   = new AnswerGraph_Schema();
+        $this->robots     = new AnswerGraph_Robots();
+        $this->llmstxt    = new AnswerGraph_LLMsTxt();
+        $this->markdown   = new AnswerGraph_Markdown_View();
+        $this->schema     = new AnswerGraph_Schema();
+        $this->bot_logger = new AnswerGraph_Bot_Logger();
+        $this->indexnow   = new AnswerGraph_IndexNow();
 
         // 1. Robots.txt Filter
         add_filter('robots_txt', [$this->robots, 'filter_robots'], 10, 2);
 
-        // 2. Query Vars & Rewrite Rules
+        // 2. Query Vars, Rewrite Rules, & Discovery Headers
         add_filter('query_vars', [$this, 'register_query_vars']);
         add_action('init', [$this, 'register_rewrite_rules']);
         add_action('template_redirect', [$this, 'handle_virtual_endpoints'], 1);
+        add_action('send_headers', [$this, 'send_discovery_headers']);
+        add_action('wp_head', [$this, 'output_markdown_discovery_link'], 5);
+        add_action('transition_post_status', [$this, 'maybe_ping_indexnow'], 10, 3);
 
         // 3. Schema JSON-LD Output & Yoast Harmonization
         if (defined('WPSEO_VERSION')) {
@@ -118,12 +134,72 @@ class AnswerGraph_Core {
         add_rewrite_tag('%answergraph_endpoint%', '([^&]+)');
     }
 
+    public function render_markdown_discovery_link($permalink) {
+        $url = add_query_arg('format', 'llm-md', (string) $permalink);
+        return '<link rel="alternate" type="text/markdown" href="' . esc_url($url) . '" />';
+    }
+
+    public function output_markdown_discovery_link() {
+        if (is_admin() || !is_singular()) {
+            return;
+        }
+        $url = get_permalink();
+        if ($url) {
+            echo $this->render_markdown_discovery_link($url) . "\n";
+        }
+    }
+
+    public function send_discovery_headers() {
+        if (is_admin() || headers_sent()) {
+            return;
+        }
+        header('X-LLMs-Txt: ' . esc_url_raw(home_url('/llms.txt')));
+    }
+
+    public function maybe_ping_indexnow($new_status, $old_status, $post) {
+        if (!$this->option_enabled(AnswerGraph_IndexNow::ENABLED_OPTION, 'yes')) {
+            return;
+        }
+        if (!$this->indexnow->should_ping_post($new_status, $post)) {
+            return;
+        }
+        $url = function_exists('get_permalink') ? get_permalink($post->ID) : '';
+        if ($url) {
+            $sent = $this->indexnow->ping_urls([$url], false);
+            $this->bot_logger->record_event('indexnow', 'Auto-ping IndexNow: ' . $url, $sent ? 'ok' : 'error');
+        }
+    }
+
+    protected function log_bot_request($req_path, $status) {
+        if (!is_admin() && !empty($_SERVER['HTTP_USER_AGENT'])) {
+            $this->bot_logger->record_hit((string) $_SERVER['HTTP_USER_AGENT'], (string) $req_path, (int) $status);
+        }
+    }
+
     public function handle_virtual_endpoints() {
         $endpoint = get_query_var('answergraph_endpoint');
         $format   = isset($_GET['format']) ? sanitize_text_field($_GET['format']) : '';
+        $req_path = !empty($_SERVER['REQUEST_URI']) ? (string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) : '/';
+
+        // Serve IndexNow verification key file /{key}.txt (only query options when URL ends with 32-hex .txt)
+        $home_path = function_exists('home_url') ? rtrim((string) parse_url(home_url('/'), PHP_URL_PATH), '/') : '';
+        $rel_path  = ($home_path !== '' && strpos($req_path, $home_path) === 0)
+            ? substr($req_path, strlen($home_path))
+            : $req_path;
+        if (preg_match('#^/?([a-f0-9]{32})\.txt$#i', (string) $rel_path, $km) && $this->option_enabled(AnswerGraph_IndexNow::ENABLED_OPTION, 'yes')) {
+            $key = $this->indexnow->get_or_create_key();
+            if (strtolower($km[1]) === strtolower($key)) {
+                if (function_exists('status_header')) {
+                    status_header(200);
+                }
+                $this->log_bot_request($req_path, 200);
+                header('Content-Type: text/plain; charset=utf-8');
+                echo $key;
+                exit;
+            }
+        }
 
         if (!$endpoint && !empty($_SERVER['REQUEST_URI'])) {
-            $req_path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
             if (preg_match('#(^|/)llms\.txt$#i', $req_path)) {
                 $endpoint = 'llms';
             } elseif (preg_match('#(^|/)llms-full\.txt$#i', $req_path)) {
@@ -131,12 +207,22 @@ class AnswerGraph_Core {
             }
         }
 
-        if ($format === 'llm-md' && is_singular()) {
+        if ($endpoint === 'llms' || $endpoint === 'llms-full') {
+            if (function_exists('status_header')) {
+                status_header(200);
+            }
+            $this->log_bot_request($req_path, 200);
+        } elseif ($format === 'llm-md' && is_singular()) {
             global $post;
             if ($post && $post->post_status === 'publish') {
                 if (function_exists('post_password_required') && post_password_required($post)) {
-                    wp_die(__('Konten ini dilindungi kata sandi.', 'answergraph'), 403);
+                    $this->log_bot_request($req_path, 403);
+                    wp_die(__('Konten ini dilindungi kata sandi.', 'answergraph'), '', ['response' => 403]);
                 }
+                if (function_exists('status_header')) {
+                    status_header(200);
+                }
+                $this->log_bot_request($req_path, 200);
                 header('Content-Type: text/markdown; charset=utf-8');
                 header('X-Robots-Tag: noindex, follow');
                 echo "# {$post->post_title}\n\n";
@@ -144,6 +230,11 @@ class AnswerGraph_Core {
                 echo $this->markdown->convert_html($raw_html);
                 exit;
             }
+            $status = function_exists('http_response_code') && http_response_code() ? (int) http_response_code() : 200;
+            $this->log_bot_request($req_path, $status);
+        } else {
+            $status = function_exists('http_response_code') && http_response_code() ? (int) http_response_code() : 200;
+            $this->log_bot_request($req_path, $status);
         }
 
         if ($endpoint === 'llms') {

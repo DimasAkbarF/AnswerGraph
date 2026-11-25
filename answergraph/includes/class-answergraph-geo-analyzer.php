@@ -99,7 +99,7 @@ class AnswerGraph_GEO_Analyzer {
         foreach ($matches[1] as $url) {
             if (strpos($url, 'http') === 0) {
                 $host = parse_url($url, PHP_URL_HOST);
-                if ($host && (!$domain || strpos($host, $domain) === false)) {
+                if ($host && (!$domain || stripos($host, $domain) === false)) {
                     $external++;
                 }
             }

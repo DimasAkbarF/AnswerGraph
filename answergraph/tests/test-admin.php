@@ -81,6 +81,9 @@ if (!function_exists('get_posts')) {
 require_once __DIR__ . '/../includes/class-answergraph-geo-analyzer.php';
 require_once __DIR__ . '/../includes/class-answergraph-aeo-analyzer.php';
 require_once __DIR__ . '/../includes/class-answergraph-compliance-linter.php';
+require_once __DIR__ . '/../includes/class-answergraph-pillar-links.php';
+require_once __DIR__ . '/../includes/class-answergraph-bot-logger.php';
+require_once __DIR__ . '/../includes/class-answergraph-indexnow.php';
 require_once __DIR__ . '/../admin/class-answergraph-admin.php';
 
 class TestAnswerGraphAdmin extends AnswerGraphTestCase {
@@ -101,6 +104,9 @@ class TestAnswerGraphAdmin extends AnswerGraphTestCase {
         $this->assertStringContainsString('Entity Disambiguation', $output);
         $this->assertStringContainsString('robots.txt', $output);
         $this->assertStringContainsString('LLMs.txt &amp; LLMs-full.txt Manager', $output);
+        $this->assertStringContainsString('IndexNow', $output);
+        $this->assertStringContainsString('Telemetri Bot AI &amp; Log Aktivitas Sistem', $output);
+        $this->assertStringContainsString('answergraph_clear_logs', $output);
     }
 
     public function test_render_audit_page() {
@@ -110,6 +116,7 @@ class TestAnswerGraphAdmin extends AnswerGraphTestCase {
         $output = ob_get_clean();
 
         $this->assertStringContainsString('Audit Semua Artikel', $output);
+        $this->assertStringContainsString('Kesegaran', $output);
     }
 
     public function test_render_post_metabox() {
@@ -146,6 +153,10 @@ class TestAnswerGraphAdmin extends AnswerGraphTestCase {
         $this->assertStringContainsString('data-ag-elementor=', $output);
         $this->assertStringContainsString('if (html === null) return;', $output);
         $this->assertStringContainsString('Linter Regulasi ESDM', $output);
+        $this->assertStringContainsString('Saran Link Internal Pilar', $output);
+        $this->assertStringContainsString('data-ag-preset-esdm=', $output);
+        $this->assertStringContainsString('data-ag-custom-banned=', $output);
+        $this->assertStringContainsString('answergraph-copy-pillar', $output);
         $this->assertStringContainsString('answergraph_schema_type', $output);
     }
 
