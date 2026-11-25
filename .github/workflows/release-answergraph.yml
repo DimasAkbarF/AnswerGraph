@@ -1,0 +1,47 @@
+name: Release AnswerGraph Plugin
+
+on:
+  push:
+    tags:
+      - 'answergraph-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+
+      - name: Run AnswerGraph Tests
+        run: |
+          for t in answergraph/tests/test-*.php; do
+            php "$t" || exit 1
+          done
+
+      - name: Package answergraph.zip
+        run: |
+          mkdir -p dist
+          python3 - << 'EOF'
+          import os, zipfile
+          with zipfile.ZipFile("dist/answergraph.zip", "w", zipfile.ZIP_DEFLATED) as zf:
+              for root, dirs, files in os.walk("answergraph"):
+                  dirs[:] = [d for d in dirs if d != "tests" and not d.startswith(".")]
+                  for f in sorted(files):
+                      if f.startswith("."):
+                          continue
+                      full = os.path.join(root, f)
+                      zf.write(full, full)
+          EOF
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/answergraph.zip
+          generate_release_notes: true
